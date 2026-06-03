@@ -2,6 +2,7 @@ import requests
 import re
 import json
 import time
+from decimal import Decimal, ROUND_HALF_UP
 
 _pet_index = None
 
@@ -44,6 +45,31 @@ def _fetch_pets():
                     return
     raise RuntimeError("Could not find pet data on the page.")
 
+def normalize_value(value):
+    if value is None:
+        return None
+    
+    if isinstance(value, (int, float)):
+        str_value = str(value)
+        
+        if '.' in str_value and len(str_value.split('.')[1]) > 3:
+            decimal_value = Decimal(str(value))
+            if 0 < value < 1:
+                normalized = float(decimal_value.quantize(Decimal('0.01'), rounding=ROUND_HALF_UP))
+                return normalized
+            elif value >= 1:
+                normalized = int(round(value))
+                return normalized
+        
+        if abs(value - round(value)) < 0.001:
+            return int(round(value))
+        
+        if isinstance(value, float):
+            return round(value, 2)
+        
+        return value
+    
+    return value
 
 def convert_to_full_words(item_name):
     words = item_name.split()
@@ -118,7 +144,6 @@ def convert_to_full_words(item_name):
         'ride': ride
     }
 
-
 def get_value_for_item(item_name):
     _fetch_pets()
     
@@ -163,14 +188,27 @@ def get_value_for_item(item_name):
             if isinstance(v, str) and "-" in v:
                 parts = v.split("-")
                 try:
-                    avg = (int(parts[0]) + int(parts[1])) // 2
-                    return avg
+                    left = float(parts[0])
+                    right = float(parts[1])
+                    avg = (left + right) / 2
+                    normalized = normalize_value(avg)
+                    return normalized
                 except:
                     return v
+            
+            if isinstance(v, (int, float)):
+                return normalize_value(v)
+            
+            if isinstance(v, str):
+                try:
+                    num = float(v.replace(',', ''))
+                    return normalize_value(num)
+                except:
+                    return v
+            
             return v
     
     return pet_data.get("value")
-
 
 def update_adm_values():
     print("="*60)
@@ -206,17 +244,24 @@ def update_adm_values():
             new_value = get_value_for_item(item_name)
             
             if new_value is not None:
-                if isinstance(new_value, str):
-                    new_value = int(new_value.replace(',', ''))
-                
                 old_value = item_data.get('value', 0)
                 
-                if old_value != new_value:
+                old_normalized = normalize_value(old_value)
+                new_normalized = normalize_value(new_value)
+                
+                if old_normalized != new_normalized:
                     item_data['value'] = new_value
                     updated_count += 1
-                    print(f"{item_name:<30} {old_value:>12,} {new_value:>12,} {'UPDATED':>10}")
+                    
+                    old_display = f"{old_normalized:,}" if isinstance(old_normalized, int) else f"{old_normalized:,.2f}"
+                    new_display = f"{new_normalized:,}" if isinstance(new_normalized, int) else f"{new_normalized:,.2f}"
+                    
+                    print(f"{item_name:<30} {old_display:>12} {new_display:>12} {'UPDATED':>10}")
                 else:
-                    print(f"{item_name:<30} {old_value:>12,} {new_value:>12,} {'SAME':>10}")
+                    old_display = f"{old_normalized:,}" if isinstance(old_normalized, int) else f"{old_normalized:,.2f}"
+                    new_display = f"{new_normalized:,}" if isinstance(new_normalized, int) else f"{new_normalized:,.2f}"
+                    
+                    print(f"{item_name:<30} {old_display:>12} {new_display:>12} {'SAME':>10}")
             else:
                 failed_items.append(item_name)
                 print(f"{item_name:<30} {'N/A':>12} {'N/A':>12} {'NOT FOUND':>10}")
@@ -243,7 +288,6 @@ def update_adm_values():
             print(f"  - {item}")
         if len(failed_items) > 20:
             print(f"  - ...and {len(failed_items) - 20} more")
-
 
 def test_conversion():
     test_items = [
@@ -277,9 +321,12 @@ def test_conversion():
         print(f"{item:<25} {parsed['full_query']:<35} {found:<10}")
         
         if value:
-            print(f"{'':<25} {'':<35} Value: {value:,}")
+            normalized = normalize_value(value)
+            if isinstance(normalized, int):
+                print(f"{'':<25} {'':<35} Value: {normalized:,}")
+            else:
+                print(f"{'':<25} {'':<35} Value: {normalized:.2f}")
         print()
-
 
 if __name__ == "__main__":
     print("\n" + "="*60)
